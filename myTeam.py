@@ -14,69 +14,14 @@
 
 from captureAgents import CaptureAgent
 import random, time, util
-import game
-
 from game import Directions
-from game import Agent
-from game import Actions
-import util
-import time
+import game
 
 #################
 # Team creation #
 #################
 
-class FoodSearchProblem:
-    """
-    A search problem associated with finding the a path that collects all of the
-    food (dots) in a Pacman game.
-
-    A search state in this problem is a tuple ( pacmanPosition, foodGrid ) where
-      pacmanPosition: a tuple (x,y) of integers specifying Pacman's position
-      foodGrid:       a Grid (see game.py) of either True or False, specifying remaining food
-    """
-    def __init__(self, startingGameState, red):
-      if red:
-        self.food = startingGameState.getBlueFood()
-      else:
-        self.food = startingGameState.getRedFood()
-
-      self.start = (startingGameState.getAgentPosition(), self.food)
-      self.walls = startingGameState.getWalls()
-      self.startingGameState = startingGameState
-      self._expanded = 0 # DO NOT CHANGE
-      self.heuristicInfo = {} # A dictionary for the heuristic to store information
-
-    def getStartState(self):
-        return self.start
-
-    def isGoalState(self, state):
-        return state[1].count() == 0
-
-    def getSuccessors(self, state):
-        "Returns successor states, the actions they require, and a cost of 1."
-        successors = []
-        self._expanded += 1 # DO NOT CHANGE
-        for direction in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
-            x,y = state[0]
-            dx, dy = Actions.directionToVector(direction)
-            nextx, nexty = int(x + dx), int(y + dy)
-            if not self.walls[nextx][nexty]:
-
-                foodGrid = state[1]
-                tmp = foodGrid[nextx][nexty]
-
-                nextFood = state[1].copy()
-                nextFood[nextx][nexty] = False
-                successors.append( ( ((nextx, nexty), nextFood), direction, 1, tmp) )
-        return successors
-
-#Our plan: one offensive agent that precomputes the shortest path to eat all the dots, and follows that route either to completion or death.
-#          a defensive agent that always goes to the border and lines up vertically with the enemy agent closest (smallest manhattan distance) to the border
-#          if enemy eats capsule, both agents follow offensive route
-#          if enemy crosses over into our territory, defender agent tracks the offending agent immediately.
-
-#game creates team, game keeps track of the agents
+#game creates team, game keeps track of them
 #when an agent's turn is up, the game calls agent.chooseAction() in order to get the action the agent wants to take
 
 #this function creates the planner and the agents
@@ -113,25 +58,27 @@ class StarPlanner():
   def __init__(self):
     #Need probability map, this team coord, other team coord
     self.agents = {}
-    self.positions = []
+    self.positions = {}
     self.us = None
     self.them = None
     self.legalPositions = None
-    self.beliefs = None
+    self.beliefs = {}
+    self.halfway = 0
 
-    # self.searchFunction = lambda prob: aStarSearch(prob, foodHeuristic)
-    # self.searchType = FoodSearchProblem
-    self.cdts = None     #list of dots to eat ordered s.t. path through them is minimized
+    self.plan = None     #plan to eat all the dots
     
     #called the first time a new agent is added to planner
+    #post: get
   def initialize(self, gameState, red):
     # Set the teams
     if red:
       self.us = gameState.getRedTeamIndices()
-      self.them = gamestate.getBlueTeamIndices()
+      self.them = gameState.getBlueTeamIndices()
     else:
       self.us = gameState.getBlueTeamIndices()
-      self.them = gamestate.getRedTeamIndices()
+      self.them = gameState.getRedTeamIndices()
+      
+    self.halfway = gameState.data.food.width/2
     
     # Start with uniform belief.
     if self.legalPositions == None:
@@ -142,84 +89,162 @@ class StarPlanner():
         b.normalize()
         self.beliefs[i] = b
 
-    #define the problem given the start state    
-    problem = FoodSearchProblem(gameState, red)
-    self.cdts = aStarSearch(problem, foodHeuristic)
-
+    #TODO: call a method that will store the plan of eating all the dots
+    #plan = generatePlanToEatAllDots()
     #legalPositions is all the positions pacman or ghost can be
 
  
     #adds the agent to the planner
-  def addAgent(agent, index, gameState):
+  def addAgent(self, agent, index, gameState):
     self.agents[index] = agent
-    self.positions[index] = gameState.getAgentPosition(self.index)
+    self.positions[index] = gameState.getAgentPosition(index)
     if self.legalPositions == None:
       self.initialize(gameState, agent.red)
+    self.recordState(index, gameState)
 
+  def generatePlanToEatAllDots(self, gameState):
+    #.aStarSearch(foodHeuristic)
+    print "Do not generate plan to eat dots."
 
+    
     #quick way to update an agent's position
-  def updateAgentPosition(index, position):
+  def updateAgentPosition(self, index, position):
     self.positions[index] = position
     
-    #For defensive play
+  # Update beliefs with agent observation.
   def recordState(self, index, gameState):
-    #
-    noisyDistances = gamestate.getAgentDistances()
+    #Update agent positions, just in case
+    for agent in self.us:
+      self.updateAgentPosition(agent, gameState.getAgentPosition(agent))
+  
+    noisyDistances = gameState.getAgentDistances()
     position = gameState.getAgentPosition(index)
 
-   for i in self.them:
-   
-     enemyPos = gamestate.getAgentPosition(i)
+    for i in self.them:
+     enemyPos = gameState.getAgentPosition(i)
      
      if enemyPos == None:
-        noisyDistance = noisyDistance[i]
-        allPossible = util.Counter()
+       noisyDistance = noisyDistances[i]
+       allPossible = util.Counter()
 
-        if not noisyDistance == None:
-            for p in self.legalPositions:
-                trueDistance = util.manhattanDistance(p, position)
-                prob = gamestate.getDistanceProb(trueDistance, noisyDistance)
-                if prob > 0:
-                    allPossible[p] = self.beliefs[i][p]*prob
+       if not noisyDistance == None:
+         for p in self.legalPositions:
+           trueDistance = util.manhattanDistance(p, position)
+           prob = gameState.getDistanceProb(trueDistance, noisyDistance)
+           if prob > 0:
+             allPossible[p] = self.beliefs[i][p]*prob
 
-        allPossible.normalize()
-        self.beliefs[i] = allPossible
+       allPossible.normalize()
+       self.beliefs[i] = allPossible
         
+     else:
+       allPossible = util.Counter()
+       allPossible[enemyPos] = 1.0
+       #allPossible.normalize() #Not necessary
+       self.beliefs[i] = allPossible
+    
+  # Update beliefs for opponent motion. Index is the moving opponent.
+  def stepState(self, index, gameState):
+    allPossible = util.Counter()
+
+    for oldP in self.legalPositions:
+      oldX, oldY = oldP
+      pos = [oldP, (oldX+1, oldY), (oldX-1, oldY), (oldX, oldY+1), (oldX, oldY-1)]
+      legalPos = [p for p in pos if p in self.legalPositions]
+      prob = 1/len(legalPos)
+      for newP in legalPos:
+        allPossible[newP] += self.beliefs[index][oldP]*prob
+
+    for i in self.us:
+      allPossible[self.positions[i]] = 0
+    allPossible.normalize()
+    self.beliefs[index] = allPossible
+    
+  # Gets the best gues for each opponent's position
+  def getOpponentPositions(self):
+    enemyPos = []
+    for enemy in self.them:
+      enemyPos.append(self.beliefs[enemy].argMax())
+    return enemyPos
+    
+  # Gets the move for the defensive agent
+  def getDefensiveMove(self, index, gameState):
+    actions = gameState.getLegalActions(index)
+    agent = self.agents[index]
+  
+    # Determine the closest opponent and the locations of intruders
+    enemyPos = self.getOpponentPositions()
+    print "enemy:", enemyPos
+    intruded = False
+    intruders = []
+    closestPos = enemyPos[0]
+    weRed = gameState.isOnRedTeam(self.us[0])
+    if weRed:
+      for pos in enemyPos:
+        if pos == None:
+          print "Red enemy lost."
+        elif pos[0] < self.halfway:
+          intruded = True
+          intruders.append(pos)
+        elif pos[0] < closestPos[0]:
+          closestPos = pos
+    else:
+      for pos in enemyPos:
+        if pos == None:
+          print "Blue enemy lost."
+        elif pos[0] >= self.halfway:
+          intruded = True
+          intruders.append(pos)
+        elif pos[0] > closestPos[0]:
+          closestPos = pos
+          
+    # If there are intruders, charge the closest one
+    if intruded:
+      intruderPos = intruders[0]
+      intruderDist = agent.getMazeDistance(self.positions[index], intruderPos)
+      for intruder in intruders:
+        if agent.getMazeDistance(self.positions[index], intruder) < intruderDist:
+          intruderPos = intruder
+          intruderDist = agent.getMazeDistance(self.positions[index], intruderPos)
+      # Choose the action that creates a successorState with a shorter maze distance
+      for act in actions:
+        successor = gameState.generateSuccessor(index, act)
+        dist = agent.getMazeDistance(successor.getAgentPosition(index), intruderPos)
+        if dist < intruderDist:
+          return act
+          
+    # If there is no intruder, move along the midline to the closest opponent
+    else:
+      borderY = None
+      if weRed:
+        borderY = self.halfway - 1
       else:
-        allPossible = util.Counter()
-        allPossible[enemyPos] = 1.0
-        allPossible.normalize()
-        self.beliefs[i] = allPossible
+        borderY = self.halfway
+      destination = (closestPos[0], borderY)
+      
+      # If destination is not legal, move it
+      while not destination in self.legalPositions:
+        if weRed:
+          destination = (closestPos[0], destination[1] - 1)
+        else:
+          destination = (closestPos[0], destination[1] + 1)
+          
+      oldDist = agent.getMazeDistance(self.positions[index], destination)
+      for act in actions:
+        successor = gameState.generateSuccessor(index, act)
+        newDist = agent.getMazeDistance(successor.getAgentPosition(index), destination)
+        if newDist < oldDist:
+          return act
+    
+    return Directions.STOP  # Should not reach here?
 
   #tells if a agent is offensive or defensive
-  def getOffensive(self, index, gameState):
-    if index == self.us[0]:
-      return True
-    else:
-      return False
-
-    # if self.positions[index] == gameState.getInitialAgentPosition(index) && : 
-
+  def getOffensive(self, index):
+    return False
 
   #TODO: return the move the offensive agent will take
   #CAUTION: this method does not generate the food-eating plan, simply returns the move to get to the next point in the plan
-  def getOffensiveMove(self, index, gameState):
-    agent = self.agents[index]
-    x = agent.getMazeDistance(self.positions[index], self.cdts[0])
-
-    for action in gameState.getLegalActions(index):
-      successorState = gameState.generateSuccessor(index, action)
-      newpos = successorState.getAgentPosition(index)
-      tmp = agent.getMazeDistance(newpos, self.cdts[0])
-
-      if tmp == 0:
-        del self.cdts[0]
-        return action
-
-      if tmp < x:
-        return action
-
-    return Directions.STOP      #should never reach this point
+  #def getOffensiveMove(self, index, gameState):
 
 
 ##########
@@ -235,7 +260,7 @@ class StarAgent(CaptureAgent):
   
   def __init__(self, index, planner):
     self.planner = planner
-    CaptureAgent.__init__(index)
+    CaptureAgent.__init__(self, index)
 
   def registerInitialState(self, gameState):
     """
@@ -270,80 +295,17 @@ class StarAgent(CaptureAgent):
   
     self.planner.recordState(self.index, gameState)
 
+    action = Directions.STOP
     if self.planner.getOffensive(self.index):
-      #return self.planner.getOffensiveMove(self.index, gameState)    
-  
-    """
-    Picks among actions randomly.
-    """
-    actions = gameState.getLegalActions(self.index)
+      action = self.planner.getOffensiveMove(self.index, gameState)   
+    else:
+      action = self.planner.getDefensiveMove(self.index, gameState) 
+    
+    # Upon choosing an action, update beliefs for possible opponent motion and agent position.
+    successor = gameState.generateSuccessor(self.index, action)
+    self.planner.updateAgentPosition(self.index, successor.getAgentPosition(self.index))
+    nextIndex = (self.index + 1) % gameState.getNumAgents()
+    self.planner.stepState(nextIndex, gameState)
 
-    '''
-    You should change this in your own agent.
-    '''
-
-    return random.choice(actions)
-
-
-#number of food remaining
-def foodHeuristic(state):
-  return state[1].count()
-
-
-def aStarSearch(problem, heuristic=nullHeuristic):
-    """Search the node that has the lowest combined cost and heuristic first."""
-    "*** YOUR CODE HERE ***"
-    visited = set() ### Coordinates that have been visited
-    toVisit = util.PriorityQueue() ### Stack of coordinates to visit
-    start = problem.getStartState() ### Get start state of problem
-    visited.add(start[0]) ### Add start cdts to visited since we will expand it
-    for successor in problem.getSuccessors(start): ### Generate the successors of the start state (possible legal actions)
-        # direction = directions_dict[successor[1]] ### Get the direction related to moving toward that coordinate
-        direction = successor[1]
-        cost = successor[2] 
-        isFoodCdts = successor[3]
-
-        if isFoodCdts:          #food disappeared
-          tmp = successor[0]    #get the (cdts, food) pair
-          foodCdts = list(tmp[0])
-        else:
-          foodCdts = []
-
-        coordinate_and_direction_and_cost_and_cdts = [successor[0], [direction], cost, foodCdts] ### Append the coordinate, list of directions, and f(n), and list of food cdts
-        # print coordinate_and_direction
-        toVisit.push(coordinate_and_direction_and_cost_and_cdts, cost + heuristic(successor[0])) ### Push coordinate and direction to the top of the stack
-
-    while (not toVisit.isEmpty()):
-        next_node = toVisit.pop()       #automatically pop the node with the cheapest cost
-        next_node_coordinates_and_grid = next_node[0]
-        next_node_directions = next_node[1]
-        cost = next_node[2]         
-        next_node_foodCdts = next_node[3]     #NEW
-        if next_node_coordinates_and_grid[0] in visited:
-            continue
-        elif problem.isGoalState(next_node_coordinates_and_grid):
-            return next_node_foodCdts
-        else:
-            visited.add(next_node_coordinates_and_grid[0])
-            for successor in problem.getSuccessors(next_node_coordinates_and_grid):
-                # if successor[0] not in visited and successor[0] not in toVisitCoordinates.list:
-                new_direction = successor[1]
-                new_cost = cost + successor[2]
-                isFoodCdts = successor[3]
-
-                new_foodCdts = []
-                for f in next_node_foodCdts:
-                  new_foodCdts.append(f)
-
-                if isFoodCdts:          #food disappeared
-                  tmp = successor[0]    #get the (cdts, food) pair
-                  new_foodCdts.append(tmp[0])
-
-                direction = []
-                for d in next_node_directions:    #append the original actions
-                    direction.append(d)
-                direction.append(new_direction)   #append the new actions
-
-                coordinate_and_direction_and_cost_and_cdts = [successor[0], direction, new_cost, new_foodCdts]
-                toVisit.push(coordinate_and_direction_and_cost_and_cdts, new_cost + heuristic(successor[0]))
+    return action
 
